@@ -531,16 +531,52 @@ export const utf8: BytesCoder = {
   decode: (str) => new TextEncoder().encode(str),
 };
 
-export const hex: BytesCoder = /* @__PURE__ */ chain(
-  radix2(4),
-  alphabet('0123456789abcdef'),
-  join(''),
-  normalize((s: string) => {
-    if (typeof s !== 'string' || s.length % 2)
-      throw new TypeError(`hex.decode: expected string, got ${typeof s} with length ${s.length}`);
-    return s.toLowerCase();
-  })
-);
+export const hex: BytesCoder = /* @__PURE__ */ (() => {
+  // Array where index 0xf0 (240) is mapped to string 'f0'
+  const hexes = /* @__PURE__ */ Array.from({ length: 256 }, (_, i) =>
+    i.toString(16).padStart(2, '0')
+  );
+  /**
+   * @example bytesToHex(Uint8Array.from([0xca, 0xfe, 0x01, 0x23])) // 'cafe0123'
+   */
+  function bytesToHex(bytes: Uint8Array): string {
+    if (!(bytes instanceof Uint8Array)) throw new Error('Uint8Array expected');
+    // pre-caching improves the speed 6x
+    let hex = '';
+    for (let i = 0; i < bytes.length; i++) {
+      hex += hexes[bytes[i] as number];
+    }
+    return hex;
+  }
+
+  // We use very optimized technique to convert hex string to byte array
+  const asciis = { ZERO: 48, NINE: 57, A_UP: 65, F_UP: 70, A_LO: 97, F_LO: 102 } as const; // 09AFaf
+  function charCodeToBase16(char: number): number {
+    if (char >= asciis.ZERO && char <= asciis.NINE) return char - asciis.ZERO;
+    if (char >= asciis.A_UP && char <= asciis.F_UP) return char - (asciis.A_UP - 10);
+    if (char >= asciis.A_LO && char <= asciis.F_LO) return char - (asciis.A_LO - 10);
+    throw new Error('invalid byte sequence');
+  }
+
+  /**
+   * @example hexToBytes('cafe0123') // Uint8Array.from([0xca, 0xfe, 0x01, 0x23])
+   */
+  function hexToBytes(hex: string): Uint8Array {
+    if (typeof hex !== 'string') throw new Error('hex string expected, got ' + typeof hex);
+    const len = hex.length;
+    if (len % 2) throw new Error('padded hex string expected, got unpadded hex of length ' + len);
+    hex = hex.toLowerCase(); // difference from noble-hashes
+    const al = len / 2;
+    const array = new Uint8Array(al);
+    for (let i = 0, j = 0; i < al; i++) {
+      const n1 = charCodeToBase16(hex.charCodeAt(j++));
+      const n2 = charCodeToBase16(hex.charCodeAt(j++));
+      array[i] = n1 * 16 + n2;
+    }
+    return array;
+  }
+  return { encode: bytesToHex, decode: hexToBytes }
+})();
 
 // prettier-ignore
 const CODERS = {
